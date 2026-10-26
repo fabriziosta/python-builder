@@ -294,9 +294,9 @@ git checkout -- Containerfile build_scripts/build_utils.sh
 ## Known Limitations
 
 ### Rust Multi-Architecture
-- Current implementation has x86_64 hash only
-- For aarch64/i686 builds, need architecture-specific rustup-init hashes
-- Script handles architecture detection, just needs proper hashes
+- `build-rust.sh` maps `AUDITWHEEL_ARCH` to the rustup-init triple and sha256
+  for x86_64, aarch64, s390x, ppc64le, i686, and armv7l
+- Digests must be refreshed when bumping `RUSTUP_VERSION` in the Containerfile
 
 ### Build Time Increase
 - Phase 2 adds ~5-10 minutes (mainly Rust installation)
