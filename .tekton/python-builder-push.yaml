@@ -2,7 +2,7 @@ apiVersion: tekton.dev/v1
 kind: PipelineRun
 metadata:
   annotations:
-    build.appstudio.openshift.io/repo: https://github.com/konflux-lightwell/python-builder?rev={{revision}}
+    build.appstudio.openshift.io/repo: https://github.com/fabriziosta/python-builder?rev={{revision}}
     build.appstudio.redhat.com/commit_sha: '{{revision}}'
     build.appstudio.redhat.com/target_branch: '{{target_branch}}'
     pipelinesascode.tekton.dev/cancel-in-progress: "false"
@@ -10,11 +10,11 @@ metadata:
     pipelinesascode.tekton.dev/on-cel-expression: event == "push" && target_branch
       == "main"
   labels:
-    appstudio.openshift.io/application: python-builder
+    appstudio.openshift.io/application: fasta-sandbox
     appstudio.openshift.io/component: python-builder
     pipelines.appstudio.openshift.io/type: build
   name: python-builder-on-push
-  namespace: lightwell-python-tenant
+  namespace: ansible-tenant
 spec:
   params:
   - name: git-url
@@ -22,7 +22,7 @@ spec:
   - name: revision
     value: '{{revision}}'
   - name: output-image
-    value: quay.io/redhat-user-workloads/lightwell-python-tenant/python-builder/python-builder:{{revision}}
+    value: quay.io/redhat-user-workloads-stage/ansible-tenant/python-builder:{{revision}}
   - name: dockerfile
     value: Containerfile
   pipelineSpec:
@@ -538,22 +538,8 @@ spec:
       optional: true
     - name: netrc
       optional: true
-  taskRunSpecs:
-  - pipelineTaskName: build-container
-    timeout: 3h
-    stepSpecs:
-    - name: build
-      computeResources:
-        requests:
-          cpu: '8'
-          memory: 12Gi
-        limits:
-          cpu: '8'
-          memory: 12Gi
   taskRunTemplate:
     serviceAccountName: build-pipeline-python-builder
-  timeouts:
-    pipeline: 3h30m0s
   workspaces:
   - name: git-auth
     secret:
