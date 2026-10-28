@@ -24,6 +24,13 @@ check_sha256sum "${ARROW_ROOT}.tar.gz" "${ARROW_HASH}"
 tar xfz "${ARROW_ROOT}.tar.gz"
 pushd "${ARROW_ROOT}/cpp"
 
+# Arrow 25.0.1 / 26.0.0 pin xsimd 14.2.0, which fails Clang VSX on ppc64le
+# (cannot use 'long' with '__vector bool'). 14.3.0 has the VSX Clang fix.
+sed -i \
+  -e 's/^ARROW_XSIMD_BUILD_VERSION=.*/ARROW_XSIMD_BUILD_VERSION=14.3.0/' \
+  -e 's/^ARROW_XSIMD_BUILD_SHA256_CHECKSUM=.*/ARROW_XSIMD_BUILD_SHA256_CHECKSUM=b3d50e7a73fbf4642ceef30131c93414901d69eee41c2a5302db650b03e2c792/' \
+  thirdparty/versions.txt
+
 cmake_extra_args=()
 target_arch="${AUDITWHEEL_ARCH:?AUDITWHEEL_ARCH must be set}"
 if [[ "$target_arch" == "x86_64" ]]; then
