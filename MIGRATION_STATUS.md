@@ -33,7 +33,7 @@ This document tracks the implementation of the migration from AlmaLinux 8 to UBI
 1. **Rust 1.84.0 + Cargo** ⚠️ CRITICAL
    - Script: `build_scripts/build-rust.sh`
    - Method: rustup installation
-   - Hash: `4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10` (x86_64)
+   - Hashes: per-arch rustup-init digests in `build-rust.sh` (x86_64, aarch64, s390x, ppc64le, …)
    - Wrappers created for `rustc`, `cargo`, `rustup` in `/usr/local/bin`
 
 2. **libjpeg-turbo 3.0.1**
@@ -240,9 +240,9 @@ podman run --rm plumbing-builder:ubi8-phase4 \
 ## Known Issues / Notes
 
 ### Rust Architecture Support
-- Current hash is for x86_64 only
-- For multi-arch builds, need architecture-specific hashes for rustup-init
-- Alternative: Download rustup-init without hash verification (not recommended)
+- `build-rust.sh` selects the rustup-init triple and sha256 per `AUDITWHEEL_ARCH`
+  (x86_64, aarch64, s390x, ppc64le, i686, armv7l)
+- Digests are pinned for the `RUSTUP_VERSION` archive URL set in the Containerfile
 
 ### OpenBLAS Tuning
 - Uses `DYNAMIC_ARCH=1` for runtime CPU detection
