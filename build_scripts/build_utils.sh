@@ -14,6 +14,23 @@ export BASE_POLICY=manylinux
 PACKAGE_MANAGER=dnf
 OS_ID_LIKE=rhel
 
+# Containerfile defaults PLATFORM/AUDITWHEEL_ARCH to x86_64. Native multi-arch
+# builds (buildah --platform / MPC VMs) run on the target CPU, so correct the
+# arch from uname when the default does not match the host. Explicit non-x86_64
+# PLATFORM values are left alone (including linux32 cross cases).
+if [ "${AUDITWHEEL_ARCH:-}" = "x86_64" ]; then
+	_manylinux_host_arch="$(uname -m)"
+	case "${_manylinux_host_arch}" in
+		aarch64|s390x|ppc64le)
+			export AUDITWHEEL_ARCH="${_manylinux_host_arch}"
+			if [ -n "${AUDITWHEEL_POLICY:-}" ]; then
+				export AUDITWHEEL_PLAT="${AUDITWHEEL_POLICY}_${AUDITWHEEL_ARCH}"
+			fi
+			;;
+	esac
+	unset _manylinux_host_arch
+fi
+
 function check_var {
 	if [ -z "$1" ]; then
 		echo "required variable not defined"
