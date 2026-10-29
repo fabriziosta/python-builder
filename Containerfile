@@ -1,10 +1,10 @@
 # default to latest supported policy, x86_64
 ARG BASEIMAGE=registry.access.redhat.com/ubi8/ubi@sha256:c322aa68f2d630b36b9faab64094357f62720be2f56f7099376ca2d6c4fe389b
 ARG POLICY=manylinux_2_28
-# buildah --platform sets TARGETARCH (amd64/arm64/s390x/ppc64le). PLATFORM is
-# the manylinux/auditwheel name (x86_64/aarch64/s390x/ppc64le). Default stays
-# x86_64 for local single-arch builds; build_utils.sh and manylinux-entrypoint
-# remap AUDITWHEEL_ARCH from uname -m on native multi-arch builds.
+# buildah --platform sets TARGETARCH (amd64/arm64/s390x/ppc64le). AUDITWHEEL_ARCH
+# / PLAT are baked from TARGETARCH via runtime_base_packages_<arch> stages below
+# (OCI amd64→x86_64, arm64→aarch64). PLATFORM remains for local overrides /
+# build_utils.sh and manylinux-entrypoint still remap from uname as a safety net.
 ARG TARGETARCH=amd64
 ARG PLATFORM=x86_64
 ARG DEVTOOLSET_ROOTPATH=/opt/rh/gcc-toolset-14/root
@@ -33,7 +33,9 @@ ARG LD_LIBRARY_PATH_ARG
 ARG PREPEND_PATH
 LABEL maintainer="Red Hat"
 
-ENV AUDITWHEEL_POLICY=${POLICY} AUDITWHEEL_ARCH=${PLATFORM} AUDITWHEEL_PLAT=${POLICY}_${PLATFORM}
+# Temporary defaults for package-install RUNs; entrypoint/build_utils remap from
+# uname on non-x86. Arch-specific stages below override the baked image ENV.
+ENV AUDITWHEEL_POLICY=${POLICY} AUDITWHEEL_ARCH=x86_64 AUDITWHEEL_PLAT=${POLICY}_x86_64
 # TARGETARCH is consumed by buildah multi-platform builds; keep it visible for debugging.
 ENV TARGETARCH=${TARGETARCH}
 ENV LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 LANGUAGE=en_US.UTF-8
@@ -55,6 +57,25 @@ ENTRYPOINT ["manylinux-entrypoint"]
 COPY build_scripts/install-runtime-packages.sh /opt/_internal/build_scripts/
 RUN manylinux-entrypoint /opt/_internal/build_scripts/install-runtime-packages.sh
 
+# Bake AUDITWHEEL_ARCH/PLAT for this TARGETARCH (buildah sets TARGETARCH per platform).
+FROM runtime_base_packages AS runtime_base_packages_amd64
+ARG POLICY
+ENV AUDITWHEEL_ARCH=x86_64 AUDITWHEEL_PLAT=${POLICY}_x86_64
+
+FROM runtime_base_packages AS runtime_base_packages_arm64
+ARG POLICY
+ENV AUDITWHEEL_ARCH=aarch64 AUDITWHEEL_PLAT=${POLICY}_aarch64
+
+FROM runtime_base_packages AS runtime_base_packages_s390x
+ARG POLICY
+ENV AUDITWHEEL_ARCH=s390x AUDITWHEEL_PLAT=${POLICY}_s390x
+
+FROM runtime_base_packages AS runtime_base_packages_ppc64le
+ARG POLICY
+ENV AUDITWHEEL_ARCH=ppc64le AUDITWHEEL_PLAT=${POLICY}_ppc64le
+
+FROM runtime_base_packages_${TARGETARCH} AS runtime_base_arch
+
 
 # prepare cross-compilation support
 FROM --platform=linux/${MANYLINUX_BUILDARCH} ghcr.io/mayeut/static-clang:${MANYLINUX_CLANG_VERSION} AS static_clang_bin
@@ -69,7 +90,7 @@ FROM scratch AS static_clang
 COPY --from=static_clang_prepare /tmp/cross-compiler /
 
 
-FROM runtime_base_packages AS runtime_base
+FROM runtime_base_arch AS runtime_base
 COPY build_scripts/install-autoconf.sh /opt/_internal/build_scripts/
 RUN --mount=type=bind,from=static_clang,target=/tmp/cross-compiler,ro \
     export AUTOCONF_ROOT=autoconf-2.72 && \
