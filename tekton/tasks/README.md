@@ -7,15 +7,33 @@ Version 0.2 runs one Python entrypoint per task, with separate trusted-artifact
 | --- | --- | --- |
 | [Source preparation](source-to-sdist/0.2/source-to-sdist.yaml) | `source-to-sdist` | `lightwell-source-to-sdist` |
 | [Wheel build](python-fromager-build-wheels/0.2/python-fromager-build-wheels.yaml) | `python-fromager-build-wheels` | `lightwell-build-wheels` |
+| [Wheel build (remote)](python-fromager-build-wheels-remote/0.2/python-fromager-build-wheels-remote.yaml) | `python-fromager-build-wheels-remote` | `lightwell-build-wheels` (via MPC) |
 | [Sdist normalization](python-fromager-build-sdist/0.2/python-fromager-build-sdist.yaml) | `fromager-build-sdist` | `lightwell-build-sdist` |
 
 The sdist resource name intentionally omits `python-`. Build-index attachment is
 maintained in fath-cuan's `tekton/task/attach-build-index`.
 
+## Remote wheel builds
+
+`python-fromager-build-wheels-remote` is **generated** from the vanilla wheel
+task. Do not hand-edit it. After changing the vanilla YAML, regenerate:
+
+```sh
+./hack/generate-fromager-build-wheels-remote.sh
+```
+
+See [task-generator/remote/README.md](../../task-generator/remote/README.md).
+
+The remote task adds `PLATFORM`, `IMAGE_APPEND_PLATFORM` (default `false`), and
+the required secret volume `multi-platform-ssh-$(context.taskRun.name)`.
+Consuming pipelines should matrix over platforms and set
+`IMAGE_APPEND_PLATFORM=true` for unique per-arch tags.
+
 ## Configuration
 
-- Set `PYTHON_BUILDER_IMAGE` to a digest-pinned image built from this repo's
-  [Containerfile.cli](../../Containerfile.cli). The task YAML has no default image.
+- Set `PYTHON_BUILDER_IMAGE` to a digest-pinned multi-arch image built from this
+  repo's [Containerfile.cli](../../Containerfile.cli). The task YAML has no
+  default image.
 - Bind source preparation's `git-auth` workspace to `username`/`password` files
   for the build-config clone.
 - Registry pushes use the existing Konflux `select-oci-auth` mechanism. No extra
@@ -41,9 +59,10 @@ configuration handoff. All steps share `/var/workdir`; only `create` emits
 `SDISTS_ARTIFACT` and `MANIFEST_ARTIFACT`. The CLI writes final image/SBOM results.
 See [handoff paths and compatibility](../../docs/migration.md#trusted-artifact-handoffs).
 
-Build and publish the [execution image](../../docs/image.md), publish task bundles,
-and pin their references in consuming pipelines. Validate representative TaskRuns
-in staging. Local YAML/CLI wiring checks run with:
+Build and publish the [execution image](../../docs/image.md), publish task
+bundles (including `fromager-build-wheels-remote`), and pin their references in
+consuming pipelines. Validate representative TaskRuns in staging. Local YAML/CLI
+wiring checks run with:
 
 ```sh
 uv run pytest tests/unit/test_tekton_tasks.py

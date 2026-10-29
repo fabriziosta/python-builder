@@ -1,0 +1,301 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  annotations:
+    tekton.dev/pipelines.minVersion: 1.0.0
+    tekton.dev/tags: python, wheels, fromager, lightwell, konflux
+  labels:
+    app.kubernetes.io/version: "0.2"
+    build.appstudio.redhat.com/build_type: python-fromager-build
+  name: python-fromager-build-wheels-remote
+spec:
+  description: Remote (multi-platform-controller) variant of python-fromager-build-wheels.
+    Requires PLATFORM and a multi-platform-ssh-$(context.taskRun.name) secret provisioned
+    by MPC. Restore the sdist and JSON configuration snapshot with build-trusted-artifacts.
+    Run lightwell-build-wheels to build and verify wheels, enrich SBOMs, and publish
+    the final OCI image. A separate trusted-artifact create step publishes the build
+    manifest.
+  params:
+  - description: Trusted Artifact URI containing downloads/<PACKAGE>-<VERSION>.tar.gz.
+    name: SDISTS_ARTIFACT
+    type: string
+  - description: Canonical Python package name (PEP 503 normalized).
+    name: PACKAGE
+    type: string
+  - description: 'Package version string (upstream version). For example: 0.4.0, 2.5.0.'
+    name: VERSION
+    type: string
+  - description: 'Expected wheel version from source-to-sdist: upstream for Validated,
+      or upstream+rhlw.B[.n.N] for remediated builds.'
+    name: COMPUTED_VERSION
+    type: string
+  - description: 'Build mode: Backport, Novel, Validated, or Scratch. Validated builds
+      construct the full dependency closure from source (no wheel server), so the
+      allowed-artifacts provenance check applies to the remediated modes (Backport,
+      Novel, Scratch). Scratch is a reversioning-check build carrying a fixed +rhlw.0
+      version.'
+    name: BUILD_TYPE
+    type: string
+  - description: Reference of the OCI artifact to produce (wheels image).
+    name: IMAGE
+    type: string
+  - default: ""
+    description: Delete image tag after specified time. Empty means keep.
+    name: IMAGE_EXPIRES_AFTER
+    type: string
+  - default: "false"
+    description: Set to true to add AI attribution to the attached SBOM.
+    name: AI_ASSISTED
+    type: string
+  - default: ""
+    description: Comma-separated AI model IDs, used when AI_ASSISTED is true.
+    name: AI_MODELS
+    type: string
+  - default: ""
+    description: The OCI repository to store the trusted artifact to.
+    name: ociStorage
+    type: string
+  - default: ""
+    description: The expiration time for the trusted artifact.
+    name: ociArtifactExpiresAfter
+    type: string
+  - default: https://packages.redhat.com/lightwell/python/validated/simple/
+    description: Wheel server URL for prebuilt wheel lookup during fromager dependency
+      resolution.
+    name: WHEEL_SERVER_URL
+    type: string
+  - default: lightwell-pulp-read-secret
+    description: Optional Secret name containing Pulp credentials (basic-auth username/password
+      or SERVICE_ACCOUNT_USERNAME/SERVICE_ACCOUNT_PASSWORD).
+    name: PULP_SECRET_NAME
+    type: string
+  - default: trusted-ca
+    description: Name of the ConfigMap to read CA bundle data from.
+    name: caTrustConfigMapName
+    type: string
+  - default: ca-bundle.crt
+    description: Key in ConfigMap for CA bundle.
+    name: caTrustConfigMapKey
+    type: string
+  - description: Digest-pinned execution image containing lightwell-python and this
+      task's runtime tools. See tekton/tasks/README.md.
+    name: PYTHON_BUILDER_IMAGE
+    type: string
+  - description: The platform to build on (e.g. linux/x86_64, linux/arm64)
+    name: PLATFORM
+    type: string
+  - default: "false"
+    description: Whether to append a sanitized platform architecture on the IMAGE
+      tag
+    name: IMAGE_APPEND_PLATFORM
+    type: string
+  results:
+  - description: Digest of the OCI artifact (wheels) just built.
+    name: IMAGE_DIGEST
+  - description: OCI artifact repository and tag where the wheels were pushed.
+    name: IMAGE_URL
+  - description: Full OCI reference (repo@digest) of the built wheels.
+    name: IMAGE_REF
+  - description: OCI reference for the attached SBOM blob.
+    name: SBOM_BLOB_URL
+  - description: Trusted Artifact URI containing build-manifest.json staged by lightwell-build-wheels
+      and published by create-manifest-artifact.
+    name: MANIFEST_ARTIFACT
+  stepTemplate:
+    computeResources:
+      limits:
+        cpu: "4"
+        memory: 4Gi
+      requests:
+        cpu: "4"
+        memory: 4Gi
+    env:
+    - name: BUILDER_IMAGE
+      value: $(params.PYTHON_BUILDER_IMAGE)
+    - name: PLATFORM
+      value: $(params.PLATFORM)
+    - name: IMAGE_APPEND_PLATFORM
+      value: $(params.IMAGE_APPEND_PLATFORM)
+    volumeMounts:
+    - mountPath: /var/workdir
+      name: workdir
+  steps:
+  - args:
+    - use
+    - $(params.SDISTS_ARTIFACT)=/var/workdir/sdists-repo
+    computeResources: {}
+    image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:2712c8a6453fc9db5fc4c2d9d952554a4eea46d2fdba47a272b79fa07f8c8c40
+    name: use-sdists-artifact
+    volumeMounts:
+    - mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
+      name: trusted-ca
+      readOnly: true
+      subPath: ca-bundle.crt
+  - computeResources: {}
+    image: $(params.PYTHON_BUILDER_IMAGE)
+    name: build-wheels
+    script: |-
+      #!/bin/bash
+      set -e
+      set -o verbose
+
+      echo "[$(date --utc -Ins)] Prepare connection"
+
+      mkdir -p ~/.ssh
+      if [ -e "/ssh/error" ]; then
+        #no server could be provisioned
+        cat /ssh/error
+        exit 1
+      fi
+
+      SSH_HOST=$(cat /ssh/host)
+      export SSH_HOST
+
+      if [ "$SSH_HOST" == "localhost" ] ; then
+        IS_LOCALHOST=true
+        echo "Localhost detected; running build in cluster"
+      elif [ -e "/ssh/otp" ]; then
+        if ! curl --fail --cacert /ssh/otp-ca -XPOST -d @/ssh/otp "$(cat /ssh/otp-server)" >~/.ssh/id_rsa; then
+          echo "Failed to retrieve SSH key from the OTP server. This can happen when the PipelineRun retry option re-runs a task whose one-time credential was already consumed. Please, start a new build, and if problem persists, please report it as an MPC bug." >&2
+          exit 1
+        fi
+        echo "" >> ~/.ssh/id_rsa
+      else
+        cp /ssh/id_rsa ~/.ssh
+      fi
+
+      mkdir -p scripts
+
+      if ! [[ $IS_LOCALHOST ]]; then
+        echo "[$(date --utc -Ins)] Setup VM"
+
+        # python-builder-cli may lack ssh/rsync. Install only for real remote VMs.
+        # MPC often sets host=localhost for linux/x86_64 (in-cluster), which skips
+        # this block and runs lightwell-build-wheels directly in this image.
+        if ! command -v ssh >/dev/null 2>&1 || ! command -v rsync >/dev/null 2>&1; then
+          dnf install -y openssh-clients rsync
+        fi
+
+        chmod 0400 ~/.ssh/id_rsa
+
+        # Share a single ssh connection to the build VM between every ssh and rsync
+        # invocation below. ControlMaster only multiplexes if a ControlPath is set,
+        # and ControlPersist keeps the master alive between invocations.
+        # Note: OpenSSH rejects inline "#" comments on config value lines.
+        cat >~/.ssh/config <<'SSHCONFIGEOF'
+      Host *
+        ControlMaster auto
+        ControlPath ~/.ssh/control-%C
+        ControlPersist yes
+      SSHCONFIGEOF
+        chmod 0600 ~/.ssh/config
+
+        BUILD_DIR=$(cat /ssh/user-dir)
+        export BUILD_DIR
+        export SSH_ARGS="-o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=10"
+        echo "$BUILD_DIR"
+        # shellcheck disable=SC2086
+        ssh $SSH_ARGS "$SSH_HOST"  mkdir -p "${BUILD_DIR@Q}/workspaces" "${BUILD_DIR@Q}/scripts" "${BUILD_DIR@Q}/volumes"
+
+        echo "[$(date --utc -Ins)] Rsync data"
+
+        rsync --timeout=300 -razW /var/workdir/ "$SSH_HOST:$BUILD_DIR/volumes/workdir/"
+        rsync --timeout=300 -razW /mnt/trusted-ca/ "$SSH_HOST:$BUILD_DIR/volumes/trusted-ca/"
+        rsync --timeout=300 -razW /mnt/pulp-secret/ "$SSH_HOST:$BUILD_DIR/volumes/pulp-secret/"
+        mkdir -p "$HOME/.docker"
+        rsync --timeout=300 -razW  "$HOME/.docker/" "$SSH_HOST:$BUILD_DIR/.docker/"
+        rsync --timeout=300 -razW  "/tekton/results/" "$SSH_HOST:$BUILD_DIR/results/"
+      fi
+
+      IMAGE="$(params.IMAGE)"
+      export IMAGE
+      if [ "${IMAGE_APPEND_PLATFORM}" == "true" ] && [ -n "${IMAGE:-}" ]; then
+        IMAGE="${IMAGE}-${PLATFORM//[^a-zA-Z0-9]/-}"
+        export IMAGE
+      fi
+
+      cat >scripts/script-build-wheels.sh <<'REMOTESSHEOF'
+      #!/bin/bash
+      set -o verbose
+      set -e
+      cd /var/workdir
+      exec "lightwell-build-wheels" --package=$(params.PACKAGE) --version=$(params.VERSION) "--workdir=/var/workdir" "--results-dir=/tekton/results" "--ca-bundle=/mnt/trusted-ca/ca-bundle.crt" --build-type=$(params.BUILD_TYPE) --computed-version=$(params.COMPUTED_VERSION) "--sdists-dir=/var/workdir/sdists-repo" "--manifest-output=/var/workdir/build-manifest.json" --image="$IMAGE" --image-expires-after=$(params.IMAGE_EXPIRES_AFTER) --wheel-server-url=$(params.WHEEL_SERVER_URL) "--pulp-secret=/mnt/pulp-secret" --ai-assisted=$(params.AI_ASSISTED) --ai-models=$(params.AI_MODELS)
+
+      REMOTESSHEOF
+      chmod +x scripts/script-build-wheels.sh
+
+      if ! [[ $IS_LOCALHOST ]]; then
+        rsync --timeout=300 -ra scripts "$SSH_HOST:$BUILD_DIR"
+        echo "[$(date --utc -Ins)] Build via ssh"
+        # shellcheck disable=SC2086
+        # Please note: all variables below the first ssh line must be quoted with ${var@Q}!
+        # See https://stackoverflow.com/questions/6592376/prevent-ssh-from-breaking-up-shell-script-parameters
+        ssh $SSH_ARGS "$SSH_HOST" podman  run \
+          --tmpfs /run/secrets \
+          -e IMAGE="${IMAGE@Q}" \
+          -v "${BUILD_DIR@Q}/volumes/workdir:/var/workdir:Z" \
+          -v "${BUILD_DIR@Q}/volumes/trusted-ca:/mnt/trusted-ca:Z" \
+          -v "${BUILD_DIR@Q}/volumes/pulp-secret:/mnt/pulp-secret:Z" \
+          -v "${BUILD_DIR@Q}/.docker/:/root/.docker:Z" \
+          -v "${BUILD_DIR@Q}/results/:/tekton/results:Z" \
+          -v "${BUILD_DIR@Q}/scripts:/scripts:Z" \
+          --user=0 --rm --entrypoint='' "${BUILDER_IMAGE@Q}" /scripts/script-build-wheels.sh "${@@Q}"
+        echo "[$(date --utc -Ins)] Rsync back"
+        rsync --timeout=300 -razW --stats "$SSH_HOST:$BUILD_DIR/volumes/workdir/" /var/workdir/
+        rsync --timeout=300 -razW --stats "$SSH_HOST:$BUILD_DIR/results/" "/tekton/results/"
+      else
+        bash scripts/script-build-wheels.sh "$@"
+      fi
+      echo "Build on remote host $SSH_HOST finished"
+
+      echo "[$(date --utc -Ins)] End remote"
+    volumeMounts:
+    - mountPath: /mnt/trusted-ca
+      name: trusted-ca
+      readOnly: true
+    - mountPath: /mnt/pulp-secret
+      name: pulp-secret
+      readOnly: true
+    - mountPath: /ssh
+      name: ssh
+      readOnly: true
+  - args:
+    - create
+    - --store
+    - $(params.ociStorage)
+    - $(results.MANIFEST_ARTIFACT.path)=/var/workdir/build-manifest.json
+    computeResources:
+      limits:
+        cpu: "1"
+        memory: 256Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+    env:
+    - name: IMAGE_EXPIRES_AFTER
+      value: $(params.ociArtifactExpiresAfter)
+    image: quay.io/konflux-ci/build-trusted-artifacts:latest@sha256:2712c8a6453fc9db5fc4c2d9d952554a4eea46d2fdba47a272b79fa07f8c8c40
+    name: create-manifest-artifact
+    volumeMounts:
+    - mountPath: /etc/pki/tls/certs/ca-custom-bundle.crt
+      name: trusted-ca
+      readOnly: true
+      subPath: ca-bundle.crt
+  volumes:
+  - configMap:
+      items:
+      - key: $(params.caTrustConfigMapKey)
+        path: ca-bundle.crt
+      name: $(params.caTrustConfigMapName)
+      optional: true
+    name: trusted-ca
+  - name: pulp-secret
+    secret:
+      optional: true
+      secretName: $(params.PULP_SECRET_NAME)
+  - emptyDir: {}
+    name: workdir
+  - name: ssh
+    secret:
+      optional: false
+      secretName: multi-platform-ssh-$(context.taskRun.name)
