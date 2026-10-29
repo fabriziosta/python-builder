@@ -1,0 +1,401 @@
+/*
+Copyright 2022 The Tekton Authors
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+    http://www.apache.org/licenses/LICENSE-2.0
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
+// Generates a multi-platform-controller (MPC) remote variant of the
+// python-fromager-build-wheels Tekton task. Adapted from
+// calungaproject/plumbing/task-generator/remote for Lightwell wheel builds:
+// wraps the build-wheels step (command/args or script), syncs the workdir
+// volume, and adds the MPC PLATFORM + multi-platform-ssh-$(context.taskRun.name)
+// contract.
+package main
+
+import (
+	"bytes"
+	"flag"
+	"os"
+	"path/filepath"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
+
+	tektonapi "github.com/tektoncd/pipeline/pkg/apis/pipeline/v1"
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/serializer"
+	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/cli-runtime/pkg/printers"
+	klog "k8s.io/klog/v2"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
+)
+
+const remoteBuildStep = "build-wheels"
+
+func main() {
+	var sourceTask string
+	var remoteTask string
+
+	flag.StringVar(&sourceTask, "source-task", "", "The location of the vanilla python-fromager-build-wheels task")
+	flag.StringVar(&remoteTask, "remote-task", "", "The location of the remote task YAML to overwrite")
+
+	opts := zap.Options{
+		Development: true,
+	}
+	opts.BindFlags(flag.CommandLine)
+	klog.InitFlags(flag.CommandLine)
+	flag.Parse()
+	if sourceTask == "" || remoteTask == "" {
+		println("Must specify both source-task and remote-task params")
+		os.Exit(1)
+	}
+
+	task := tektonapi.Task{}
+	streamFileYamlToTektonObj(sourceTask, &task)
+
+	decodingScheme := runtime.NewScheme()
+	utilruntime.Must(tektonapi.AddToScheme(decodingScheme))
+	convertToSsh(&task)
+	y := printers.YAMLPrinter{}
+	b := bytes.Buffer{}
+	_ = y.PrintObj(&task, &b)
+	err := os.MkdirAll(filepath.Dir(remoteTask), 0755) //#nosec G301 -- all the dirs in the repo are 755
+	if err != nil {
+		panic(err)
+	}
+	err = os.WriteFile(remoteTask, b.Bytes(), 0660) //#nosec
+	if err != nil {
+		panic(err)
+	}
+}
+
+func decodeBytesToTektonObjbytes(bytes []byte, obj runtime.Object) runtime.Object {
+	decodingScheme := runtime.NewScheme()
+	utilruntime.Must(tektonapi.AddToScheme(decodingScheme))
+	decoderCodecFactory := serializer.NewCodecFactory(decodingScheme)
+	decoder := decoderCodecFactory.UniversalDecoder(tektonapi.SchemeGroupVersion)
+	err := runtime.DecodeInto(decoder, bytes, obj)
+	if err != nil {
+		panic(err)
+	}
+	return obj
+}
+
+func streamFileYamlToTektonObj(path string, obj runtime.Object) runtime.Object {
+	bytes, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		panic(err)
+	}
+	return decodeBytesToTektonObjbytes(bytes, obj)
+}
+
+// commandArgsToScript turns a command/args step into a bash script suitable for
+// the remote heredoc. Rewrites --image=$(params.IMAGE) to --image="$IMAGE" so
+// IMAGE_APPEND_PLATFORM can adjust the tag before the CLI runs.
+func commandArgsToScript(step *tektonapi.Step) string {
+	parts := append([]string{}, step.Command...)
+	parts = append(parts, step.Args...)
+	if len(parts) == 0 {
+		panic("build-wheels step has neither script nor command/args")
+	}
+	var b strings.Builder
+	b.WriteString("#!/bin/bash\nset -o verbose\nset -e\n")
+	if step.WorkingDir != "" {
+		b.WriteString("cd " + step.WorkingDir + "\n")
+	}
+	b.WriteString("exec")
+	for _, part := range parts {
+		if strings.HasPrefix(part, "--image=$(params.IMAGE)") || part == "--image=$(params.IMAGE)" {
+			part = "--image=\"$IMAGE\""
+		}
+		b.WriteByte(' ')
+		b.WriteString(shellQuote(part))
+	}
+	b.WriteByte('\n')
+	return b.String()
+}
+
+func shellQuote(s string) string {
+	// Keep Tekton $(params.*) substitutions unquoted so the TaskRun expands them.
+	// Quote only when the token needs shell safety and is not a param reference.
+	if strings.Contains(s, "$(params.") || strings.Contains(s, "$(results.") {
+		return s
+	}
+	if s == "--image=\"$IMAGE\"" {
+		return s
+	}
+	return strconv.Quote(s)
+}
+
+func convertToSsh(task *tektonapi.Task) {
+	builderImage := ""
+	syncVolumes := map[string]bool{}
+	for _, i := range task.Spec.Volumes {
+		if i.Secret != nil || i.ConfigMap != nil {
+			syncVolumes[i.Name] = true
+		}
+	}
+	// Unique per-arch tags for matrixed multi-platform builds (same as buildah-remote).
+	// IMAGE_APPEND_PLATFORM defaults to false; pipelines set it true with a matrix.
+	// Use ${IMAGE:-} so steps with set -u do not fail when IMAGE is unset.
+	adjustRemoteImage := `if [ "${IMAGE_APPEND_PLATFORM}" == "true" ] && [ -n "${IMAGE:-}" ]; then
+  IMAGE="${IMAGE}-${PLATFORM//[^a-zA-Z0-9]/-}"
+  export IMAGE
+fi
+`
+
+	for stepPod := range task.Spec.Steps {
+		step := &task.Spec.Steps[stepPod]
+		if step.Script != "" && step.Name != remoteBuildStep {
+			scriptHeaderRE := regexp.MustCompile(`^#!(/usr)?(/local)?/bin/(env )?bash(\n)+(set .*\n)*`)
+			scriptHeader := scriptHeaderRE.FindString(step.Script)
+			var ret string
+			if scriptHeader != "" {
+				ret = scriptHeaderRE.ReplaceAllString(step.Script, "")
+			} else {
+				ret = step.Script
+			}
+			// If there is a shebang, it is explicitly non-bash, so don't adjust the image
+			if !strings.HasPrefix(ret, "#!") {
+				if scriptHeader == "" {
+					scriptHeader = "#!/bin/bash\nset -e\n"
+				}
+				ret = scriptHeader + adjustRemoteImage + ret
+			}
+			step.Script = ret
+			continue
+		} else if step.Name != remoteBuildStep {
+			continue
+		}
+
+		// Vanilla Lightwell task uses command/args; synthesize a script first.
+		if step.Script == "" {
+			step.Script = commandArgsToScript(step)
+			step.Command = nil
+			step.Args = nil
+			// WorkingDir is baked into the synthesized script for the remote container.
+			step.WorkingDir = ""
+		}
+
+		podmanArgs := ""
+
+		ret := `#!/bin/bash
+set -e
+set -o verbose
+
+echo "[$(date --utc -Ins)] Prepare connection"
+
+mkdir -p ~/.ssh
+if [ -e "/ssh/error" ]; then
+  #no server could be provisioned
+  cat /ssh/error
+  exit 1
+fi
+
+SSH_HOST=$(cat /ssh/host)
+export SSH_HOST
+
+if [ "$SSH_HOST" == "localhost" ] ; then
+  IS_LOCALHOST=true
+  echo "Localhost detected; running build in cluster"
+elif [ -e "/ssh/otp" ]; then
+  if ! curl --fail --cacert /ssh/otp-ca -XPOST -d @/ssh/otp "$(cat /ssh/otp-server)" >~/.ssh/id_rsa; then
+    echo "Failed to retrieve SSH key from the OTP server. This can happen when the PipelineRun retry option re-runs a task whose one-time credential was already consumed. Please, start a new build, and if problem persists, please report it as an MPC bug." >&2
+    exit 1
+  fi
+  echo "" >> ~/.ssh/id_rsa
+else
+  cp /ssh/id_rsa ~/.ssh
+fi
+
+mkdir -p scripts
+
+if ! [[ $IS_LOCALHOST ]]; then
+  echo "[$(date --utc -Ins)] Setup VM"
+
+  # python-builder-cli may lack ssh/rsync. Install only for real remote VMs.
+  # MPC often sets host=localhost for linux/x86_64 (in-cluster), which skips
+  # this block and runs lightwell-build-wheels directly in this image.
+  if ! command -v ssh >/dev/null 2>&1 || ! command -v rsync >/dev/null 2>&1; then
+    dnf install -y openssh-clients rsync
+  fi
+
+  chmod 0400 ~/.ssh/id_rsa
+
+  # Share a single ssh connection to the build VM between every ssh and rsync
+  # invocation below. ControlMaster only multiplexes if a ControlPath is set,
+  # and ControlPersist keeps the master alive between invocations.
+  # Note: OpenSSH rejects inline "#" comments on config value lines.
+  cat >~/.ssh/config <<'SSHCONFIGEOF'
+Host *
+  ControlMaster auto
+  ControlPath ~/.ssh/control-%C
+  ControlPersist yes
+SSHCONFIGEOF
+  chmod 0600 ~/.ssh/config
+
+  BUILD_DIR=$(cat /ssh/user-dir)
+  export BUILD_DIR
+  export SSH_ARGS="-o StrictHostKeyChecking=no -o ServerAliveInterval=60 -o ServerAliveCountMax=10"
+  echo "$BUILD_DIR"
+  # shellcheck disable=SC2086
+  ssh $SSH_ARGS "$SSH_HOST"  mkdir -p "${BUILD_DIR@Q}/workspaces" "${BUILD_DIR@Q}/scripts" "${BUILD_DIR@Q}/volumes"
+
+  echo "[$(date --utc -Ins)] Rsync data"
+`
+		// disable podman subscription-manager integration
+		env := "\\\n    --tmpfs /run/secrets \\\n"
+
+		// Before the build we sync the contents of the workspace to the remote host
+		for _, workspace := range task.Spec.Workspaces {
+			ret += "\n  rsync --timeout=300 -razW \"$(workspaces." + workspace.Name + ".path)\"/ \"$SSH_HOST:$BUILD_DIR/workspaces/" + workspace.Name + "/\""
+			podmanArgs += "    -v \"${BUILD_DIR@Q}/workspaces/" + workspace.Name + ":$(workspaces." + workspace.Name + ".path):Z\" \\\n"
+		}
+		// Also sync the volume mounts from the template
+		if task.Spec.StepTemplate != nil {
+			for _, volume := range task.Spec.StepTemplate.VolumeMounts {
+				ret += "\n  rsync --timeout=300 -razW " + volume.MountPath + "/ \"$SSH_HOST:$BUILD_DIR/volumes/" + volume.Name + "/\""
+				podmanArgs += "    -v \"${BUILD_DIR@Q}/volumes/" + volume.Name + ":" + volume.MountPath + ":Z\" \\\n"
+			}
+		}
+		for _, volume := range step.VolumeMounts {
+			if syncVolumes[volume.Name] {
+				ret += "\n  rsync --timeout=300 -razW " + volume.MountPath + "/ \"$SSH_HOST:$BUILD_DIR/volumes/" + volume.Name + "/\""
+				podmanArgs += "    -v \"${BUILD_DIR@Q}/volumes/" + volume.Name + ":" + volume.MountPath + ":Z\" \\\n"
+			}
+		}
+		// Ensure .docker exists so rsync does not fail when no pull-secret was mounted.
+		ret += "\n  mkdir -p \"$HOME/.docker\""
+		ret += "\n  rsync --timeout=300 -razW  \"$HOME/.docker/\" \"$SSH_HOST:$BUILD_DIR/.docker/\""
+		podmanArgs += "    -v \"${BUILD_DIR@Q}/.docker/:/root/.docker:Z\" \\\n"
+		ret += "\n  rsync --timeout=300 -razW  \"/tekton/results/\" \"$SSH_HOST:$BUILD_DIR/results/\""
+		podmanArgs += "    -v \"${BUILD_DIR@Q}/results/:/tekton/results:Z\" \\\n"
+		ret += "\nfi\n"
+
+		// Seed IMAGE from the task param so IMAGE_APPEND_PLATFORM can rewrite it
+		// before lightwell-build-wheels sees --image="$IMAGE".
+		ret += "\nIMAGE=\"$(params.IMAGE)\"\nexport IMAGE\n"
+		ret += adjustRemoteImage
+
+		script := "scripts/script-" + step.Name + ".sh"
+
+		ret += "\ncat >" + script + " <<'REMOTESSHEOF'\n"
+
+		// The base task might now be using a bash shell, so we need to make sure
+		// that we only have one shebang declaration. If there is a shebang declaration,
+		// we should also consolidate the set declarations.
+		reShebang := regexp.MustCompile(`(#!.*\n)(set -.*\n)*`)
+		shebangMatch := reShebang.FindString(step.Script)
+		if shebangMatch != "" {
+			ret += shebangMatch
+			step.Script = strings.TrimPrefix(step.Script, shebangMatch)
+		} else {
+			ret += "#!/bin/bash\nset -o verbose\nset -e\n"
+		}
+
+		if step.WorkingDir != "" {
+			ret += "cd " + step.WorkingDir + "\n"
+		}
+		ret += step.Script
+		ret += "\nREMOTESSHEOF"
+		ret += "\nchmod +x " + script + "\n"
+
+		if task.Spec.StepTemplate != nil {
+			for _, e := range task.Spec.StepTemplate.Env {
+				env += "    -e " + e.Name + "=\"${" + e.Name + "@Q}\" \\\n"
+			}
+		}
+		// Forward the possibly platform-adjusted IMAGE into the remote container.
+		env += "    -e IMAGE=\"${IMAGE@Q}\" \\\n"
+		ret += "\nif ! [[ $IS_LOCALHOST ]]; then"
+		ret += "\n  rsync --timeout=300 -ra scripts \"$SSH_HOST:$BUILD_DIR\""
+		containerScript := "scripts/script-" + step.Name + ".sh"
+		for _, e := range step.Env {
+			env += "    -e " + e.Name + "=\"${" + e.Name + "@Q}\" \\\n"
+		}
+		ret += "\n  echo \"[$(date --utc -Ins)] Build via ssh\""
+		podmanArgs += "    -v \"${BUILD_DIR@Q}/scripts:/scripts:Z\" \\\n"
+		ret += "\n  # shellcheck disable=SC2086"
+		ret += "\n  # Please note: all variables below the first ssh line must be quoted with ${var@Q}!"
+		ret += "\n  # See https://stackoverflow.com/questions/6592376/prevent-ssh-from-breaking-up-shell-script-parameters"
+		ret += "\n  ssh $SSH_ARGS \"$SSH_HOST\" podman  run " + env + "" + podmanArgs + "    --user=0 --rm --entrypoint='' \"${BUILDER_IMAGE@Q}\" /" + containerScript + ` "${@@Q}"`
+
+		// Sync workdir back so subsequent local steps (create-manifest-artifact) can use it
+		ret += "\n  echo \"[$(date --utc -Ins)] Rsync back\""
+		if task.Spec.StepTemplate == nil {
+			panic("Did not find a stepTemplate with a 'workdir' volume mount.")
+		}
+		workdirVolIndex := slices.IndexFunc(task.Spec.StepTemplate.VolumeMounts,
+			func(volume v1.VolumeMount) bool { return volume.Name == "workdir" })
+		if workdirVolIndex != -1 {
+			volume := task.Spec.StepTemplate.VolumeMounts[workdirVolIndex]
+			ret += "\n  rsync --timeout=300 -razW --stats \"$SSH_HOST:$BUILD_DIR/volumes/" + volume.Name + "/\" " + volume.MountPath + "/"
+		} else {
+			panic("Did not find a 'workdir' volume mount in the stepTemplate. " +
+				"Subsequent steps need workdir contents synced back from the remote host.")
+		}
+		//sync back results
+		ret += "\n  rsync --timeout=300 -razW --stats \"$SSH_HOST:$BUILD_DIR/results/\" \"/tekton/results/\""
+
+		ret += `
+else
+  bash ` + containerScript + ` "$@"
+fi
+echo "Build on remote host $SSH_HOST finished"
+
+echo "[$(date --utc -Ins)] End remote"`
+
+		for _, i := range strings.Split(ret, "\n") {
+			if strings.HasSuffix(i, " ") {
+				panic(i)
+			}
+		}
+		step.Script = ret
+		builderImage = step.Image
+		step.VolumeMounts = append(step.VolumeMounts, v1.VolumeMount{
+			Name:      "ssh",
+			ReadOnly:  true,
+			MountPath: "/ssh",
+		})
+	}
+
+	if builderImage == "" {
+		panic("Did not find a '" + remoteBuildStep + "' step to wrap for remote execution.")
+	}
+
+	task.Name = strings.ReplaceAll(task.Name, "python-fromager-build-wheels", "python-fromager-build-wheels-remote")
+	if task.Spec.Description != "" {
+		task.Spec.Description = "Remote (multi-platform-controller) variant of python-fromager-build-wheels. " +
+			"Requires PLATFORM and a multi-platform-ssh-$(context.taskRun.name) secret provisioned by MPC. " +
+			task.Spec.Description
+	}
+	task.Spec.Params = append(task.Spec.Params, tektonapi.ParamSpec{Name: "PLATFORM", Type: tektonapi.ParamTypeString, Description: "The platform to build on (e.g. linux/x86_64, linux/arm64)"})
+
+	falseVar := false
+	task.Spec.Volumes = append(task.Spec.Volumes, v1.Volume{
+		Name: "ssh",
+		VolumeSource: v1.VolumeSource{
+			Secret: &v1.SecretVolumeSource{
+				SecretName: "multi-platform-ssh-$(context.taskRun.name)",
+				Optional:   &falseVar,
+			},
+		},
+	})
+	if task.Spec.StepTemplate == nil {
+		task.Spec.StepTemplate = &tektonapi.StepTemplate{}
+	}
+	task.Spec.StepTemplate.Env = append(task.Spec.StepTemplate.Env, v1.EnvVar{Name: "BUILDER_IMAGE", Value: builderImage})
+	task.Spec.StepTemplate.Env = append(task.Spec.StepTemplate.Env, v1.EnvVar{Name: "PLATFORM", Value: "$(params.PLATFORM)"})
+
+	task.Spec.Params = append(task.Spec.Params, tektonapi.ParamSpec{Name: "IMAGE_APPEND_PLATFORM", Type: tektonapi.ParamTypeString, Description: "Whether to append a sanitized platform architecture on the IMAGE tag", Default: &tektonapi.ParamValue{StringVal: "false", Type: tektonapi.ParamTypeString}})
+	task.Spec.StepTemplate.Env = append(task.Spec.StepTemplate.Env, v1.EnvVar{Name: "IMAGE_APPEND_PLATFORM", Value: "$(params.IMAGE_APPEND_PLATFORM)"})
+}
