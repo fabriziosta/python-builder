@@ -74,9 +74,39 @@ def render(value, values):
 
 
 def test_task_catalog_is_complete():
-    paths = list(TASKS_ROOT.glob("*/*/*.yaml"))
+    # Generated MPC remote wrappers live beside hand-edited tasks; exclude them.
+    paths = [
+        path
+        for path in TASKS_ROOT.glob("*/*/*.yaml")
+        if not path.parent.parent.name.endswith("-remote")
+    ]
     assert {path.stem for path in paths} == set(TASK_COMMANDS)
     assert len(paths) == len(TASK_COMMANDS)
+
+
+def test_remote_wheels_task_has_mpc_contract():
+    path = (
+        TASKS_ROOT
+        / "python-fromager-build-wheels-remote"
+        / "0.2"
+        / "python-fromager-build-wheels-remote.yaml"
+    )
+    task = yaml.load(path.read_text(), Loader=UniqueKeyLoader)
+    assert task["metadata"]["name"] == "python-fromager-build-wheels-remote"
+    param_names = {param["name"] for param in task["spec"]["params"]}
+    assert {"PLATFORM", "IMAGE_APPEND_PLATFORM", "PYTHON_BUILDER_IMAGE"} <= param_names
+    volumes = {volume["name"]: volume for volume in task["spec"]["volumes"]}
+    assert volumes["ssh"]["secret"]["secretName"] == (
+        "multi-platform-ssh-$(context.taskRun.name)"
+    )
+    build = next(step for step in task["spec"]["steps"] if step["name"] == "build-wheels")
+    assert "script" in build
+    assert "command" not in build
+    assert "--image=\"$IMAGE\"" in build["script"]
+    assert any(
+        env["name"] == "BUILDER_IMAGE" and env["value"] == "$(params.PYTHON_BUILDER_IMAGE)"
+        for env in task["spec"]["stepTemplate"]["env"]
+    )
 
 
 def test_task_structure_and_variable_references(task):
