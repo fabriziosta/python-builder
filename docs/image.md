@@ -1,14 +1,14 @@
 # Task execution image
 
-The [Containerfile.cli](../Containerfile.cli) extends a digest-pinned plumbing-builder
-image for Linux x86_64. Publish the result and pass its digest as
-`PYTHON_BUILDER_IMAGE` to the [Tekton tasks](../tekton/tasks/README.md).
+The [Containerfile.cli](../Containerfile.cli) extends a digest-pinned multi-arch
+native [python-builder](../Containerfile) image. Publish the result and pass its
+digest as `PYTHON_BUILDER_IMAGE` to the [Tekton tasks](../tekton/tasks/README.md).
 
 ## Dependencies
 
 | Source | Provides |
 | --- | --- |
-| Plumbing base | CPython 3.12, Fromager, Git, auditwheel, patchelf, native compilers/libraries, and Fromager overrides |
+| Native python-builder base | CPython 3.12, Fromager, Git, auditwheel, patchelf, native compilers/libraries, and Fromager overrides (linux/amd64, arm64, s390x, ppc64le) |
 | `uv.lock` | Task package dependencies, installed in `/opt/lightwell` with `uv sync --locked --no-dev --no-editable` |
 | Pinned Konflux ORAS image | ORAS, `select-oci-auth`, `get-reference-base`, and `yq` |
 | Pinned cosign image | SPDX SBOM attachment client |
