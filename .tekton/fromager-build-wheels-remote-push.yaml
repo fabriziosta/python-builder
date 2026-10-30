@@ -23,7 +23,7 @@ spec:
   - name: revision
     value: '{{revision}}'
   - name: output-image
-    value: quay.io/redhat-user-workloads-stage/ansible-tenant/python-builder/fromager-build-wheels-remote:{{revision}}
+    value: quay.io/redhat-user-workloads-stage/ansible-tenant/fromager-build-wheels-remote:{{revision}}
   - name: dockerfile
     value: Dockerfile
   - name: path-context
