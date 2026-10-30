@@ -115,7 +115,7 @@ def run(
         "enabled" if wheel_server else "disabled",
     )
     sdists = workdir / "sdists-repo"
-    with log_stage("Copy and validate restored sdist inputs"):
+    with log_stage("Copy restored build inputs"):
         copy_input_tree(sdists_dir, sdists)
 
     with log_stage("Validate configuration snapshot and render Fromager settings"):
@@ -145,8 +145,9 @@ def run(
                 jobs=jobs,
             )
         else:
-            archive = find_sdist(sdists, package, computed)
-            LOG.info("Using sdist: %s", archive)
+            with log_stage("Locate restored sdist archive"):
+                archive = find_sdist(sdists, package, computed)
+                LOG.info("Using sdist: %s", archive)
             run_fromager(
                 runner,
                 output,
