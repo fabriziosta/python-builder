@@ -1,6 +1,6 @@
 module github.com/konflux-lightwell/python-builder/task-generator/remote
 
-go 1.26.4
+go 1.27
 
 toolchain go1.27.1
 
