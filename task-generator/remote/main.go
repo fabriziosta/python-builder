@@ -274,6 +274,11 @@ SSHCONFIGEOF
 			}
 		}
 		// Ensure .docker exists so rsync does not fail when no pull-secret was mounted.
+		// Tekton injects SA dockerconfig at $HOME/.docker/config.json in the task
+		// pod; rsync that tree and mount it at /root/.docker in the remote
+		// container. python-builder-cli sets ENV HOME=/home/builder, so override
+		// HOME=/root below — otherwise select-oci-auth looks under
+		// /home/builder/.docker, finds no token, and oras push gets 401.
 		ret += "\n  mkdir -p \"$HOME/.docker\""
 		ret += "\n  rsync --timeout=300 -razW  \"$HOME/.docker/\" \"$SSH_HOST:$BUILD_DIR/.docker/\""
 		podmanArgs += "    -v \"${BUILD_DIR@Q}/.docker/:/root/.docker:Z\" \\\n"
@@ -322,6 +327,8 @@ SSHCONFIGEOF
 		for _, e := range step.Env {
 			env += "    -e " + e.Name + "=\"${" + e.Name + "@Q}\" \\\n"
 		}
+		// Last so it wins over image ENV HOME=/home/builder; matches /root/.docker mount.
+		env += "    -e HOME=/root \\\n"
 		ret += "\n  echo \"[$(date --utc -Ins)] Build via ssh\""
 		podmanArgs += "    -v \"${BUILD_DIR@Q}/scripts:/scripts:Z\" \\\n"
 		ret += "\n  # shellcheck disable=SC2086"

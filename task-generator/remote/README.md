@@ -48,5 +48,11 @@ and creates the secret. The `build-wheels` step then SSHes to the VM, rsyncs
 `workdir`, runs `$(params.PYTHON_BUILDER_IMAGE)` via `podman run`, and rsyncs
 results back so the local `create-manifest-artifact` step continues to work.
 
+Registry push on the remote VM: Tekton SA dockerconfig is rsynced from
+`$HOME/.docker` and mounted at `/root/.docker`. The remote `podman run` sets
+`HOME=/root` so `select-oci-auth` (used by `lightwell-build-wheels`) finds those
+credentials. Without that override, the image's `HOME=/home/builder` leaves
+auth empty and `oras push` fails with Quay 401 on non-localhost platforms.
+
 Pipelines fan out platforms with a Tekton matrix over `build-platforms` (array)
 injecting `PLATFORM` into a single remote task — not one hardcoded task per arch.
