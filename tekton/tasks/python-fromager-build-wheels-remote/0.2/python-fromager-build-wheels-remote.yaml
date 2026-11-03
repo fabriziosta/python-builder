@@ -249,6 +249,8 @@ spec:
       echo "Build on remote host $SSH_HOST finished"
 
       echo "[$(date --utc -Ins)] End remote"
+    securityContext:
+      runAsUser: 0
     volumeMounts:
     - mountPath: /mnt/trusted-ca
       name: trusted-ca

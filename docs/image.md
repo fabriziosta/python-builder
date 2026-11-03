@@ -12,6 +12,7 @@ digest as `PYTHON_BUILDER_IMAGE` to the [Tekton tasks](../tekton/tasks/README.md
 | `uv.lock` | Task package dependencies, installed in `/opt/lightwell` with `uv sync --locked --no-dev --no-editable` |
 | Pinned Konflux ORAS image | ORAS, `select-oci-auth`, `get-reference-base`, and `yq` |
 | Pinned cosign image | SPDX SBOM attachment client |
+| `dnf install` in Containerfile.cli | `openssh-clients` and `rsync` for MPC remote wheel orchestration |
 
 The base supplies `/src/venv/bin/python`, `/src/venv/bin/uv`, and settings/plugins
 under `/usr/local/share/fromager/overrides`. Fromager keeps its own environment.

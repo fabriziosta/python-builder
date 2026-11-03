@@ -361,6 +361,10 @@ echo "[$(date --utc -Ins)] End remote"`
 		}
 		step.Script = ret
 		builderImage = step.Image
+		// Prefer an image that already ships ssh/rsync (Containerfile.cli). If the
+		// fallback `dnf install` path runs, the step must be root — image USER is 1001.
+		zero := int64(0)
+		step.SecurityContext = &v1.SecurityContext{RunAsUser: &zero}
 		step.VolumeMounts = append(step.VolumeMounts, v1.VolumeMount{
 			Name:      "ssh",
 			ReadOnly:  true,
