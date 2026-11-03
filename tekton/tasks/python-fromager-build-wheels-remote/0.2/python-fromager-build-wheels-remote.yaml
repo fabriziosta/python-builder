@@ -233,6 +233,7 @@ spec:
         ssh $SSH_ARGS "$SSH_HOST" podman  run \
           --tmpfs /run/secrets \
           -e IMAGE="${IMAGE@Q}" \
+          -e HOME=/root \
           -v "${BUILD_DIR@Q}/volumes/workdir:/var/workdir:Z" \
           -v "${BUILD_DIR@Q}/volumes/trusted-ca:/mnt/trusted-ca:Z" \
           -v "${BUILD_DIR@Q}/volumes/pulp-secret:/mnt/pulp-secret:Z" \
