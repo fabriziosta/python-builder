@@ -13,6 +13,7 @@ digest as `PYTHON_BUILDER_IMAGE` to the [Tekton tasks](../tekton/tasks/README.md
 | Pinned Konflux ORAS image | ORAS, `select-oci-auth`, `get-reference-base`, and `yq` |
 | Pinned cosign image | SPDX SBOM attachment client |
 | `dnf install` in Containerfile.cli | `openssh-clients` and `rsync` for MPC remote wheel orchestration |
+| `/etc/passwd` entry for UID 1001 | Lets OpenSSH run as the non-root image user |
 
 The base supplies `/src/venv/bin/python`, `/src/venv/bin/uv`, and settings/plugins
 under `/usr/local/share/fromager/overrides`. Fromager keeps its own environment.
