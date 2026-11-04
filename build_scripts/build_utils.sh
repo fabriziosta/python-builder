@@ -49,7 +49,16 @@ function fetch_source {
 	if [ -f "${file}" ]; then
 		echo "${file} exists, skipping fetch"
 	else
-		curl -fsSL --retry 10 -o "${file}" "${url}/${file}"
+		# --retry alone only covers selected HTTP statuses; connection
+		# timeouts/refusals need --retry-all-errors / --retry-connrefused
+		# (critical for flaky hosts like ffmpeg.org on multi-arch MPC builds).
+		curl -fsSL \
+			--connect-timeout 30 \
+			--retry 10 \
+			--retry-delay 5 \
+			--retry-all-errors \
+			--retry-connrefused \
+			-o "${file}" "${url}/${file}"
 	fi
 }
 

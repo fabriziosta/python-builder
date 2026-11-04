@@ -462,7 +462,7 @@ COPY build_scripts/build-ffmpeg.sh /opt/_internal/build_scripts/
 RUN --mount=type=bind,from=static_clang,target=/tmp/cross-compiler,ro \
     export FFMPEG_VERSION=8.0.3 && \
     export FFMPEG_HASH=6136812ea6d4e68bdba27e33c2a94382711cdf4f8602ffef056ff792bd6f9818 && \
-    export FFMPEG_DOWNLOAD_URL=https://ffmpeg.org/releases && \
+    export FFMPEG_DOWNLOAD_URL=https://www.ffmpeg.org/releases && \
     /tmp/cross-compiler/entrypoint /opt/_internal/build_scripts/build-ffmpeg.sh
 
 
