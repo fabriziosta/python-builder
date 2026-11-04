@@ -49,16 +49,29 @@ function fetch_source {
 	if [ -f "${file}" ]; then
 		echo "${file} exists, skipping fetch"
 	else
-		# --retry alone only covers selected HTTP statuses; connection
-		# timeouts/refusals need --retry-all-errors / --retry-connrefused
-		# (critical for flaky hosts like ffmpeg.org on multi-arch MPC builds).
-		curl -fsSL \
-			--connect-timeout 30 \
-			--retry 10 \
-			--retry-delay 5 \
-			--retry-all-errors \
-			--retry-connrefused \
-			-o "${file}" "${url}/${file}"
+		# RHEL/UBI8 ships curl 7.61, which has no --retry-all-errors (7.71+)
+		# and does not retry connection timeouts with --retry alone. Loop in
+		# the shell so flaky hosts (e.g. ffmpeg.org) survive multi-arch MPC.
+		local attempt=1
+		local max_attempts=10
+		local delay=5
+		while true; do
+			if curl -fsSL \
+				--connect-timeout 30 \
+				--retry 3 \
+				--retry-delay 2 \
+				-o "${file}" "${url}/${file}"; then
+				return 0
+			fi
+			rm -f "${file}"
+			if [ "${attempt}" -ge "${max_attempts}" ]; then
+				echo "fetch_source: failed after ${max_attempts} attempts: ${url}/${file}" >&2
+				return 1
+			fi
+			echo "fetch_source: attempt ${attempt}/${max_attempts} failed; retrying in ${delay}s: ${url}/${file}" >&2
+			sleep "${delay}"
+			attempt=$((attempt + 1))
+		done
 	fi
 }
 
