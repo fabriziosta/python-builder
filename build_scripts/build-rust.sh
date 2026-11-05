@@ -13,25 +13,44 @@ source "${MY_DIR}/build_utils.sh"
 
 # Install a more recent Rust
 check_var "${RUST_VERSION}"
-check_var "${RUSTUP_HASH}"
 check_var "${RUSTUP_DOWNLOAD_URL}"
 
 PREFIX=/opt/_internal/rust-${RUST_VERSION}
 
-# Download and verify rustup-init
+# Download and verify rustup-init. Hashes are for rustup-init from
+# https://static.rust-lang.org/rustup/archive/<RUSTUP_VERSION>/<triple>/rustup-init
+# (pinned via RUSTUP_DOWNLOAD_URL in the Containerfile; currently 1.29.1).
 RUSTUP_INIT="rustup-init"
-if [ "${AUDITWHEEL_ARCH}" == "x86_64" ]; then
-    RUSTUP_ARCH="x86_64-unknown-linux-gnu"
-elif [ "${AUDITWHEEL_ARCH}" == "aarch64" ]; then
-    RUSTUP_ARCH="aarch64-unknown-linux-gnu"
-elif [ "${AUDITWHEEL_ARCH}" == "i686" ]; then
-    RUSTUP_ARCH="i686-unknown-linux-gnu"
-elif [ "${AUDITWHEEL_ARCH}" == "armv7l" ]; then
-    RUSTUP_ARCH="armv7-unknown-linux-gnueabihf"
-else
-    echo "Unsupported architecture: ${AUDITWHEEL_ARCH}"
-    exit 1
-fi
+case "${AUDITWHEEL_ARCH}" in
+    x86_64)
+        RUSTUP_ARCH="x86_64-unknown-linux-gnu"
+        RUSTUP_HASH="dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71"
+        ;;
+    aarch64)
+        RUSTUP_ARCH="aarch64-unknown-linux-gnu"
+        RUSTUP_HASH="15f6e4ce9f583b929c996c91562bad6d4454f3281de858b02cdfdef615fac433"
+        ;;
+    s390x)
+        RUSTUP_ARCH="s390x-unknown-linux-gnu"
+        RUSTUP_HASH="312ac9390467fd7870f8aff6557c7cb3bff0a04bb11b263173fdfd81586da641"
+        ;;
+    ppc64le)
+        RUSTUP_ARCH="powerpc64le-unknown-linux-gnu"
+        RUSTUP_HASH="86ebc5b46b20013fca57dff4f83aa0c325ee90914626ce1c80ae76e126e48afb"
+        ;;
+    i686)
+        RUSTUP_ARCH="i686-unknown-linux-gnu"
+        RUSTUP_HASH="5b993042a9f0d3577592f08cb76f8b850951487c2556d90f6e9846abbb083a88"
+        ;;
+    armv7l)
+        RUSTUP_ARCH="armv7-unknown-linux-gnueabihf"
+        RUSTUP_HASH="6f34abb0d553273ce08306ea3adb758d0171f21090cc5ad5426f474ded5504d1"
+        ;;
+    *)
+        echo "Unsupported architecture: ${AUDITWHEEL_ARCH}"
+        exit 1
+        ;;
+esac
 
 fetch_source "${RUSTUP_INIT}" "${RUSTUP_DOWNLOAD_URL}/${RUSTUP_ARCH}"
 check_sha256sum "${RUSTUP_INIT}" "${RUSTUP_HASH}"

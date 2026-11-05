@@ -14,6 +14,23 @@ export BASE_POLICY=manylinux
 PACKAGE_MANAGER=dnf
 OS_ID_LIKE=rhel
 
+# Containerfile defaults PLATFORM/AUDITWHEEL_ARCH to x86_64. Native multi-arch
+# builds (buildah --platform / MPC VMs) run on the target CPU, so correct the
+# arch from uname when the default does not match the host. Explicit non-x86_64
+# PLATFORM values are left alone (including linux32 cross cases).
+if [ "${AUDITWHEEL_ARCH:-}" = "x86_64" ]; then
+	_manylinux_host_arch="$(uname -m)"
+	case "${_manylinux_host_arch}" in
+		aarch64|s390x|ppc64le)
+			export AUDITWHEEL_ARCH="${_manylinux_host_arch}"
+			if [ -n "${AUDITWHEEL_POLICY:-}" ]; then
+				export AUDITWHEEL_PLAT="${AUDITWHEEL_POLICY}_${AUDITWHEEL_ARCH}"
+			fi
+			;;
+	esac
+	unset _manylinux_host_arch
+fi
+
 function check_var {
 	if [ -z "$1" ]; then
 		echo "required variable not defined"
@@ -32,7 +49,29 @@ function fetch_source {
 	if [ -f "${file}" ]; then
 		echo "${file} exists, skipping fetch"
 	else
-		curl -fsSL --retry 10 -o "${file}" "${url}/${file}"
+		# RHEL/UBI8 ships curl 7.61, which has no --retry-all-errors (7.71+)
+		# and does not retry connection timeouts with --retry alone. Loop in
+		# the shell so flaky hosts (e.g. ffmpeg.org) survive multi-arch MPC.
+		local attempt=1
+		local max_attempts=10
+		local delay=5
+		while true; do
+			if curl -fsSL \
+				--connect-timeout 30 \
+				--retry 3 \
+				--retry-delay 2 \
+				-o "${file}" "${url}/${file}"; then
+				return 0
+			fi
+			rm -f "${file}"
+			if [ "${attempt}" -ge "${max_attempts}" ]; then
+				echo "fetch_source: failed after ${max_attempts} attempts: ${url}/${file}" >&2
+				return 1
+			fi
+			echo "fetch_source: attempt ${attempt}/${max_attempts} failed; retrying in ${delay}s: ${url}/${file}" >&2
+			sleep "${delay}"
+			attempt=$((attempt + 1))
+		done
 	fi
 }
 
