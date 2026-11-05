@@ -39,40 +39,48 @@ function check_var {
 }
 
 
+function fetch_url {
+	# Download a full URL to dest with shell-level retries. RHEL/UBI8 curl 7.61
+	# has no --retry-all-errors and does not retry HTTP 5xx/timeouts reliably
+	# with --retry alone — needed for flaky GitHub/release hosts on MPC builds.
+	local dest=$1
+	check_var "${dest}"
+	local url=$2
+	check_var "${url}"
+	if [ -f "${dest}" ]; then
+		echo "${dest} exists, skipping fetch"
+		return 0
+	fi
+	local attempt=1
+	local max_attempts=10
+	local delay=5
+	while true; do
+		if curl -fsSL \
+			--connect-timeout 30 \
+			--retry 3 \
+			--retry-delay 2 \
+			-o "${dest}" "${url}"; then
+			return 0
+		fi
+		rm -f "${dest}"
+		if [ "${attempt}" -ge "${max_attempts}" ]; then
+			echo "fetch_url: failed after ${max_attempts} attempts: ${url}" >&2
+			return 1
+		fi
+		echo "fetch_url: attempt ${attempt}/${max_attempts} failed; retrying in ${delay}s: ${url}" >&2
+		sleep "${delay}"
+		attempt=$((attempt + 1))
+	done
+}
+
+
 function fetch_source {
-	# This is called both inside and outside the build context (e.g. in Travis) to prefetch
-	# source tarballs, where curl exists (and works)
+	# Prefetch source tarballs as ${url}/${file} (manylinux layout).
 	local file=$1
 	check_var "${file}"
 	local url=$2
 	check_var "${url}"
-	if [ -f "${file}" ]; then
-		echo "${file} exists, skipping fetch"
-	else
-		# RHEL/UBI8 ships curl 7.61, which has no --retry-all-errors (7.71+)
-		# and does not retry connection timeouts with --retry alone. Loop in
-		# the shell so flaky hosts (e.g. ffmpeg.org) survive multi-arch MPC.
-		local attempt=1
-		local max_attempts=10
-		local delay=5
-		while true; do
-			if curl -fsSL \
-				--connect-timeout 30 \
-				--retry 3 \
-				--retry-delay 2 \
-				-o "${file}" "${url}/${file}"; then
-				return 0
-			fi
-			rm -f "${file}"
-			if [ "${attempt}" -ge "${max_attempts}" ]; then
-				echo "fetch_source: failed after ${max_attempts} attempts: ${url}/${file}" >&2
-				return 1
-			fi
-			echo "fetch_source: attempt ${attempt}/${max_attempts} failed; retrying in ${delay}s: ${url}/${file}" >&2
-			sleep "${delay}"
-			attempt=$((attempt + 1))
-		done
-	fi
+	fetch_url "${file}" "${url}/${file}"
 }
 
 

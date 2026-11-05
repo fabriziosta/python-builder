@@ -31,6 +31,24 @@ sed -i \
   -e 's/^ARROW_XSIMD_BUILD_SHA256_CHECKSUM=.*/ARROW_XSIMD_BUILD_SHA256_CHECKSUM=b3d50e7a73fbf4642ceef30131c93414901d69eee41c2a5302db650b03e2c792/' \
   thirdparty/versions.txt
 
+# Prefetch Arrow's BUNDLED third-party tarballs with retrying curl, then point
+# cmake at local paths via ARROW_*_URL. Otherwise FetchContent hits GitHub
+# once (no shell retries); flaky 504s kill the build, and Arrow's jfrog mirror
+# is often a dead 404 fallback (e.g. protobuf-v31.1). Same approach as Arrow's
+# thirdparty/download_dependencies.sh, using our fetch_url retries.
+ARROW_TP_DIR="$(pwd)/thirdparty/downloads"
+mkdir -p "${ARROW_TP_DIR}"
+# shellcheck disable=SC1091
+source thirdparty/versions.txt
+for dep_packed in "${DEPENDENCIES[@]}"; do
+    # "$home_var $tar_out $dep_url"
+    IFS=" " read -r dep_url_var dep_tar_name dep_url <<< "${dep_packed}"
+    dep_out="${ARROW_TP_DIR}/${dep_tar_name}"
+    fetch_url "${dep_out}" "${dep_url}"
+    export "${dep_url_var}=${dep_out}"
+done
+unset dep_packed dep_url_var dep_tar_name dep_url dep_out
+
 cmake_extra_args=()
 target_arch="${AUDITWHEEL_ARCH:?AUDITWHEEL_ARCH must be set}"
 if [[ "$target_arch" == "x86_64" ]]; then
