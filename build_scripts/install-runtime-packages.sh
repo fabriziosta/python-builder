@@ -46,10 +46,6 @@ done
 RUNTIME_DEPS=(zlib bzip2 expat ncurses readline gdbm xz openssl libcurl uuid libffi tk)
 
 BASE_TOOLS=(autoconf automake bzip2 ca-certificates curl diffutils file make patch unzip)
-# Add bison if available (not in UBI minimal images)
-if dnf list available bison &>/dev/null; then
-	BASE_TOOLS+=(bison)
-fi
 BASE_TOOLS+=(glibc-locale-source glibc-langpack-en gnupg2 gzip hardlink hostname libcurl libxcrypt which)
 # libnsl not available in UBI8, add if present
 if dnf list available libnsl &>/dev/null; then
@@ -66,6 +62,11 @@ dnf -y install dnf-plugins-core ${EPEL}
 dnf config-manager --set-enabled ubi-8-codeready-builder-rpms 2>/dev/null || \
 	dnf config-manager --set-enabled codeready-builder-for-rhel-8-*-rpms 2>/dev/null || \
 	dnf config-manager --set-enabled powertools 2>/dev/null || true
+# bison lives in CRB/PowerTools on some arches (e.g. UBI8 s390x); probe only after
+# those repos are enabled. Needed by PostgreSQL configure in build-libpq.sh.
+if dnf list available bison &>/dev/null; then
+	BASE_TOOLS+=(bison)
+fi
 TOOLCHAIN_DEPS=(gcc-toolset-14-binutils gcc-toolset-14-gcc gcc-toolset-14-gcc-c++ gcc-toolset-14-gcc-gfortran gcc-toolset-14-libatomic-devel)
 if [ "${AUDITWHEEL_ARCH}" == "x86_64" ]; then
 	# yasm not available in UBI8, add if present (we can build without it if needed)
