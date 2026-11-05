@@ -2,6 +2,21 @@
 
 set -eu
 
+# Match build_utils.sh: Containerfile defaults AUDITWHEEL_ARCH to x86_64, but
+# multi-arch image builds run natively on the target CPU.
+if [ "${AUDITWHEEL_ARCH:-}" = "x86_64" ]; then
+	_manylinux_host_arch="$(uname -m)"
+	case "${_manylinux_host_arch}" in
+		aarch64|s390x|ppc64le)
+			export AUDITWHEEL_ARCH="${_manylinux_host_arch}"
+			if [ -n "${AUDITWHEEL_POLICY:-}" ]; then
+				export AUDITWHEEL_PLAT="${AUDITWHEEL_POLICY}_${AUDITWHEEL_ARCH}"
+			fi
+			;;
+	esac
+	unset _manylinux_host_arch
+fi
+
 if [ "${AUDITWHEEL_ARCH}" == "i686" ] && [ "$(uname -m)" == "x86_64" ]; then
 	linux32 "$@"
 elif [ "${AUDITWHEEL_ARCH}" == "armv7l" ] && [ "$(uname -m)" != "armv7l" ]; then

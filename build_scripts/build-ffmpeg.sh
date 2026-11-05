@@ -22,9 +22,31 @@ FFMPEG_ROOT="ffmpeg-${FFMPEG_VERSION}"
 
 PREFIX=/opt/_internal/ffmpeg-${FFMPEG_VERSION%.*}
 
-fetch_source "${FFMPEG_ROOT}.tar.xz" "${FFMPEG_DOWNLOAD_URL}"
-check_sha256sum "${FFMPEG_ROOT}.tar.xz" "${FFMPEG_HASH}"
-tar xf "${FFMPEG_ROOT}.tar.xz"
+# Prefer FFMPEG_DOWNLOAD_URL (www.ffmpeg.org), then alternate same-file mirrors.
+# Hash check below rejects a wrong or truncated download.
+FFMPEG_TARBALL="${FFMPEG_ROOT}.tar.xz"
+FFMPEG_URLS=("${FFMPEG_DOWNLOAD_URL}")
+for _ffmpeg_candidate in "https://www.ffmpeg.org/releases" "https://ffmpeg.org/releases"; do
+	if [ "${_ffmpeg_candidate}" != "${FFMPEG_DOWNLOAD_URL}" ]; then
+		FFMPEG_URLS+=("${_ffmpeg_candidate}")
+	fi
+done
+FFMPEG_FETCH_OK=
+for _ffmpeg_url in "${FFMPEG_URLS[@]}"; do
+	rm -f "${FFMPEG_TARBALL}"
+	if fetch_source "${FFMPEG_TARBALL}" "${_ffmpeg_url}"; then
+		FFMPEG_FETCH_OK=1
+		break
+	fi
+	echo "FFmpeg fetch failed from ${_ffmpeg_url}; trying next mirror" >&2
+done
+unset _ffmpeg_candidate _ffmpeg_url
+if [ -z "${FFMPEG_FETCH_OK}" ]; then
+	echo "FFmpeg fetch failed from all mirrors" >&2
+	exit 1
+fi
+check_sha256sum "${FFMPEG_TARBALL}" "${FFMPEG_HASH}"
+tar xf "${FFMPEG_TARBALL}"
 pushd "${FFMPEG_ROOT}"
 
 # zlib is source-built and staged into the build fs; find its paths via pkg-config
