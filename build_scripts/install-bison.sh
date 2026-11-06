@@ -12,8 +12,8 @@ MY_DIR=$(dirname "${BASH_SOURCE[0]}")
 source "${MY_DIR}/build_utils.sh"
 
 # Install GNU bison from source. UBI public repos (baseos/appstream) do not
-# ship bison; CRB may list it only with a subscription. PostgreSQL configure
-# in build-libpq.sh requires bison on PATH.
+# ship bison; CRB may list it only with a subscription. PostgreSQL 17+
+# configure in build-libpq.sh requires bison on PATH (install flex first).
 check_var "${BISON_ROOT}"
 check_var "${BISON_HASH}"
 check_var "${BISON_DOWNLOAD_URL}"

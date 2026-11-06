@@ -62,8 +62,8 @@ dnf -y install dnf-plugins-core ${EPEL}
 dnf config-manager --set-enabled ubi-8-codeready-builder-rpms 2>/dev/null || \
 	dnf config-manager --set-enabled codeready-builder-for-rhel-8-*-rpms 2>/dev/null || \
 	dnf config-manager --set-enabled powertools 2>/dev/null || true
-# bison is not in UBI public repos without entitlement; install-bison.sh builds
-# it from source for build-libpq.sh.
+# flex/bison are not in UBI public repos without entitlement; install-flex.sh
+# and install-bison.sh build them from source for build-libpq.sh (PG 17+).
 TOOLCHAIN_DEPS=(gcc-toolset-14-binutils gcc-toolset-14-gcc gcc-toolset-14-gcc-c++ gcc-toolset-14-gcc-gfortran gcc-toolset-14-libatomic-devel)
 if [ "${AUDITWHEEL_ARCH}" == "x86_64" ]; then
 	# yasm not available in UBI8, add if present (we can build without it if needed)

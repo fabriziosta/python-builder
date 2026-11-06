@@ -112,7 +112,15 @@ RUN --mount=type=bind,from=static_clang,target=/tmp/cross-compiler,ro \
     export LIBTOOL_DOWNLOAD_URL=https://ftp.gnu.org/gnu/libtool && \
     /tmp/cross-compiler/entrypoint /opt/_internal/build_scripts/install-libtool.sh
 
-# UBI does not ship bison without CRB entitlement; PostgreSQL configure needs it.
+# UBI does not ship flex/bison without CRB entitlement; PostgreSQL 17+
+# configure requires both (tarballs no longer ship pre-generated parsers).
+COPY build_scripts/install-flex.sh /opt/_internal/build_scripts/
+RUN --mount=type=bind,from=static_clang,target=/tmp/cross-compiler,ro \
+    export FLEX_ROOT=flex-2.6.4 && \
+    export FLEX_HASH=e87aae032bf07c26f85ac0ed3250998c37621d95f8bd748b31f15b33c45ee995 && \
+    export FLEX_DOWNLOAD_URL=https://github.com/westes/flex/releases/download/v2.6.4 && \
+    /tmp/cross-compiler/entrypoint /opt/_internal/build_scripts/install-flex.sh
+
 COPY build_scripts/install-bison.sh /opt/_internal/build_scripts/
 RUN --mount=type=bind,from=static_clang,target=/tmp/cross-compiler,ro \
     export BISON_ROOT=bison-3.8.2 && \
