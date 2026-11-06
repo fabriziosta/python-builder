@@ -62,11 +62,8 @@ dnf -y install dnf-plugins-core ${EPEL}
 dnf config-manager --set-enabled ubi-8-codeready-builder-rpms 2>/dev/null || \
 	dnf config-manager --set-enabled codeready-builder-for-rhel-8-*-rpms 2>/dev/null || \
 	dnf config-manager --set-enabled powertools 2>/dev/null || true
-# bison lives in CRB/PowerTools on some arches (e.g. UBI8 s390x); probe only after
-# those repos are enabled. Needed by PostgreSQL configure in build-libpq.sh.
-if dnf list available bison &>/dev/null; then
-	BASE_TOOLS+=(bison)
-fi
+# bison is not in UBI public repos without entitlement; install-bison.sh builds
+# it from source for build-libpq.sh.
 TOOLCHAIN_DEPS=(gcc-toolset-14-binutils gcc-toolset-14-gcc gcc-toolset-14-gcc-c++ gcc-toolset-14-gcc-gfortran gcc-toolset-14-libatomic-devel)
 if [ "${AUDITWHEEL_ARCH}" == "x86_64" ]; then
 	# yasm not available in UBI8, add if present (we can build without it if needed)

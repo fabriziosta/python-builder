@@ -112,6 +112,14 @@ RUN --mount=type=bind,from=static_clang,target=/tmp/cross-compiler,ro \
     export LIBTOOL_DOWNLOAD_URL=https://ftp.gnu.org/gnu/libtool && \
     /tmp/cross-compiler/entrypoint /opt/_internal/build_scripts/install-libtool.sh
 
+# UBI does not ship bison without CRB entitlement; PostgreSQL configure needs it.
+COPY build_scripts/install-bison.sh /opt/_internal/build_scripts/
+RUN --mount=type=bind,from=static_clang,target=/tmp/cross-compiler,ro \
+    export BISON_ROOT=bison-3.8.2 && \
+    export BISON_HASH=06c9e13bdf7eb24d4ceb6b59205a4f67c2c7e7213119644430fe82fbd14a0abb && \
+    export BISON_DOWNLOAD_URL=https://ftp.gnu.org/gnu/bison && \
+    /tmp/cross-compiler/entrypoint /opt/_internal/build_scripts/install-bison.sh
+
 COPY build_scripts/install-libxcrypt.sh /opt/_internal/build_scripts/
 RUN --mount=type=bind,from=static_clang,target=/tmp/cross-compiler,ro \
     export LIBXCRYPT_VERSION=4.5.1 && \
