@@ -73,6 +73,9 @@ def main() -> None:
         (["git", "--version"], ()),
         (["oras", "push", "--help"], ("--export-manifest", "--registry-config")),
         (["oras", "tag", "--help"], ("--registry-config",)),
+        # MPC remote wheel builds need these on PATH without a runtime dnf install.
+        (["ssh", "-V"], ()),
+        (["rsync", "--version"], ()),
     )
     for command, options in common_probes:
         run(command, options)

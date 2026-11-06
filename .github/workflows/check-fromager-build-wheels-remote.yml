@@ -1,0 +1,34 @@
+name: Validate PR - fromager-build-wheels-remote
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "tekton/tasks/python-fromager-build-wheels/0.2/**"
+      - "tekton/tasks/python-fromager-build-wheels-remote/0.2/**"
+      - "task-generator/remote/**"
+      - "hack/generate-fromager-build-wheels-remote.sh"
+      - ".github/workflows/check-fromager-build-wheels-remote.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  check-remote:
+    name: Check fromager-build-wheels remote
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: "./task-generator/remote/go.mod"
+      - name: Check fromager-build-wheels-remote is up to date
+        run: |
+          ./hack/generate-fromager-build-wheels-remote.sh
+          if [[ -n $(git status -s) ]]; then
+            echo "python-fromager-build-wheels-remote is not up to date, run ./hack/generate-fromager-build-wheels-remote.sh"
+            git status -s
+            git --no-pager diff
+            exit 1
+          fi

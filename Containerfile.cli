@@ -1,5 +1,4 @@
-# Match the native build environment currently used by orchestrator.
-ARG BUILDER_IMAGE=quay.io/redhat-user-workloads/calunga-tenant/plumbing-builder@sha256:d8355de03d57adef033743da1f1a3bb2f0ff038192e3220b155e9dd7dba5d37c
+ARG BUILDER_IMAGE=quay.io/redhat-user-workloads-stage/ansible-tenant/python-builder/python-builder@sha256:3958932ac955dc01dd15e539ab3ed070d1026bc7fea9ae4c58c7d81c698df789
 
 FROM quay.io/konflux-ci/oras:latest@sha256:1beeecce012c99794568f74265c065839f9703d28306a8430b667f639343a98b AS oras-bin
 FROM ghcr.io/sigstore/cosign/cosign:v3.0.2@sha256:b29487e48205d875c324c79583e2806d9d269c0fa299e0861bbec023d8430c8b AS cosign-bin
@@ -22,6 +21,12 @@ RUN /src/venv/bin/uv sync --locked --no-dev --no-editable --python /src/venv/bin
 # Default target: native package builds, source preparation, and normalization.
 FROM ${BUILDER_IMAGE} AS python-builder
 USER 0
+# openssh-clients/rsync: required by python-fromager-build-wheels-remote to talk
+# to MPC provisioned VMs. Bake them in so the task step need not `dnf install`
+# at runtime (image runs as UID 1001).
+RUN dnf -y update && \
+    dnf -y install --setopt=install_weak_deps=0 openssh-clients rsync && \
+    dnf clean all
 COPY --from=oras-bin /usr/bin/oras /usr/local/bin/oras
 COPY --from=oras-bin /usr/local/bin/select-oci-auth /usr/local/bin/select-oci-auth
 COPY --from=oras-bin /usr/local/bin/get-reference-base /usr/local/bin/get-reference-base
@@ -35,7 +40,10 @@ COPY tests/check_runtime.py /usr/local/libexec/lightwell-check-runtime.py
 ENV PATH=${PATH}:/opt/lightwell/bin
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV HOME=/home/builder
+# OpenSSH looks up the process UID in /etc/passwd; without an entry, `ssh`
+# fails with "No user exists for uid 1001" (breaks image smoke checks and MPC).
 RUN mkdir -p /var/workdir /home/builder && \
+    printf 'builder:x:1001:0:builder:/home/builder:/sbin/nologin\n' >> /etc/passwd && \
     chown 1001:0 /var/workdir /home/builder && chmod 0775 /var/workdir /home/builder
 WORKDIR /var/workdir
 USER 1001
