@@ -43,14 +43,6 @@ spec:
     description: Delete image tag after specified time. Empty means keep.
     name: IMAGE_EXPIRES_AFTER
     type: string
-  - default: "false"
-    description: Set to true to add AI attribution to the attached SBOM.
-    name: AI_ASSISTED
-    type: string
-  - default: ""
-    description: Comma-separated AI model IDs, used when AI_ASSISTED is true.
-    name: AI_MODELS
-    type: string
   - default: ""
     description: The OCI repository to store the trusted artifact to.
     name: ociStorage
@@ -219,7 +211,7 @@ spec:
       set -o verbose
       set -e
       cd /var/workdir
-      exec "lightwell-build-wheels" --package=$(params.PACKAGE) --version=$(params.VERSION) "--workdir=/var/workdir" "--results-dir=/tekton/results" "--ca-bundle=/mnt/trusted-ca/ca-bundle.crt" --build-type=$(params.BUILD_TYPE) --computed-version=$(params.COMPUTED_VERSION) "--sdists-dir=/var/workdir/sdists-repo" "--manifest-output=/var/workdir/build-manifest.json" --image="$IMAGE" --image-expires-after=$(params.IMAGE_EXPIRES_AFTER) --wheel-server-url=$(params.WHEEL_SERVER_URL) "--pulp-secret=/mnt/pulp-secret" --ai-assisted=$(params.AI_ASSISTED) --ai-models=$(params.AI_MODELS)
+      exec "lightwell-build-wheels" --package=$(params.PACKAGE) --version=$(params.VERSION) "--workdir=/var/workdir" "--results-dir=/tekton/results" "--ca-bundle=/mnt/trusted-ca/ca-bundle.crt" --build-type=$(params.BUILD_TYPE) --computed-version=$(params.COMPUTED_VERSION) "--sdists-dir=/var/workdir/sdists-repo" "--manifest-output=/var/workdir/build-manifest.json" --image="$IMAGE" --image-expires-after=$(params.IMAGE_EXPIRES_AFTER) --wheel-server-url=$(params.WHEEL_SERVER_URL) "--pulp-secret=/mnt/pulp-secret"
 
       REMOTESSHEOF
       chmod +x scripts/script-build-wheels.sh
