@@ -372,6 +372,11 @@ echo "[$(date --utc -Ins)] End remote"`
 		// fallback `dnf install` path runs, the step must be root — image USER is 1001.
 		zero := int64(0)
 		step.SecurityContext = &v1.SecurityContext{RunAsUser: &zero}
+		// Match buildah-remote: OpenSSH resolves identities via getpwuid (uid 0 ->
+		// /root/.ssh), while shell ~ follows $HOME. Containerfile.cli sets
+		// HOME=/home/builder, so without this override the OTP key lands under
+		// /home/builder/.ssh and ssh looks in /root/.ssh -> Permission denied.
+		step.Env = append(step.Env, v1.EnvVar{Name: "HOME", Value: "/root"})
 		step.VolumeMounts = append(step.VolumeMounts, v1.VolumeMount{
 			Name:      "ssh",
 			ReadOnly:  true,

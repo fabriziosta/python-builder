@@ -29,11 +29,9 @@ spec:
       or upstream+rhlw.B[.n.N] for remediated builds.'
     name: COMPUTED_VERSION
     type: string
-  - description: 'Build mode: Backport, Novel, Validated, or Scratch. Validated builds
-      construct the full dependency closure from source (no wheel server), so the
-      allowed-artifacts provenance check applies to the remediated modes (Backport,
-      Novel, Scratch). Scratch is a reversioning-check build carrying a fixed +rhlw.0
-      version.'
+  - description: 'Build mode: Backport, Novel, or Validated. Validated builds construct
+      the full dependency closure from source (no wheel server), so the allowed-artifacts
+      provenance check applies to remediated builds only.'
     name: BUILD_TYPE
     type: string
   - description: Reference of the OCI artifact to produce (wheels image).
@@ -124,6 +122,9 @@ spec:
       readOnly: true
       subPath: ca-bundle.crt
   - computeResources: {}
+    env:
+    - name: HOME
+      value: /root
     image: $(params.PYTHON_BUILDER_IMAGE)
     name: build-wheels
     script: |-
