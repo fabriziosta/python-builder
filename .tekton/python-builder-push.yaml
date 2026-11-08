@@ -8,7 +8,7 @@ metadata:
     pipelinesascode.tekton.dev/cancel-in-progress: "true"
     pipelinesascode.tekton.dev/max-keep-runs: "3"
     pipelinesascode.tekton.dev/on-cel-expression: event == "push" && target_branch
-      == "main"
+      == "main" && files.exists(x, x != "Containerfile.cli")
   labels:
     appstudio.openshift.io/application: python-builder
     appstudio.openshift.io/component: python-builder
