@@ -1,6 +1,11 @@
 # default to latest supported policy, x86_64
 ARG BASEIMAGE=registry.access.redhat.com/ubi8/ubi@sha256:bd097b288df365aec7bad694c87036534ce94d1a4974c943f417f757f8eb2ac4
 ARG POLICY=manylinux_2_28
+# buildah --platform sets TARGETARCH (amd64/arm64/s390x/ppc64le). AUDITWHEEL_ARCH
+# / PLAT are baked from TARGETARCH via runtime_base_packages_<arch> stages below
+# (OCI amd64→x86_64, arm64→aarch64). PLATFORM remains for local overrides /
+# build_utils.sh and manylinux-entrypoint still remap from uname as a safety net.
+ARG TARGETARCH=amd64
 ARG PLATFORM=x86_64
 ARG DEVTOOLSET_ROOTPATH=/opt/rh/gcc-toolset-14/root
 ARG LD_LIBRARY_PATH_ARG=${DEVTOOLSET_ROOTPATH}/usr/lib64:${DEVTOOLSET_ROOTPATH}/usr/lib:${DEVTOOLSET_ROOTPATH}/usr/lib64/dyninst:${DEVTOOLSET_ROOTPATH}/usr/lib/dyninst
@@ -21,13 +26,18 @@ ARG OPENSSL_SHARED_PREFIX=/opt/_internal/openssl-3.6
 
 FROM $BASEIMAGE AS runtime_base_packages
 ARG POLICY
+ARG TARGETARCH
 ARG PLATFORM
 ARG DEVTOOLSET_ROOTPATH
 ARG LD_LIBRARY_PATH_ARG
 ARG PREPEND_PATH
 LABEL maintainer="Red Hat"
 
-ENV AUDITWHEEL_POLICY=${POLICY} AUDITWHEEL_ARCH=${PLATFORM} AUDITWHEEL_PLAT=${POLICY}_${PLATFORM}
+# Temporary defaults for package-install RUNs; entrypoint/build_utils remap from
+# uname on non-x86. Arch-specific stages below override the baked image ENV.
+ENV AUDITWHEEL_POLICY=${POLICY} AUDITWHEEL_ARCH=x86_64 AUDITWHEEL_PLAT=${POLICY}_x86_64
+# TARGETARCH is consumed by buildah multi-platform builds; keep it visible for debugging.
+ENV TARGETARCH=${TARGETARCH}
 ENV LC_ALL=en_US.UTF-8 LANG=en_US.UTF-8 LANGUAGE=en_US.UTF-8
 ENV DEVTOOLSET_ROOTPATH=${DEVTOOLSET_ROOTPATH}
 ENV LD_LIBRARY_PATH=${LD_LIBRARY_PATH_ARG}
@@ -47,6 +57,25 @@ ENTRYPOINT ["manylinux-entrypoint"]
 COPY build_scripts/install-runtime-packages.sh /opt/_internal/build_scripts/
 RUN manylinux-entrypoint /opt/_internal/build_scripts/install-runtime-packages.sh
 
+# Bake AUDITWHEEL_ARCH/PLAT for this TARGETARCH (buildah sets TARGETARCH per platform).
+FROM runtime_base_packages AS runtime_base_packages_amd64
+ARG POLICY
+ENV AUDITWHEEL_ARCH=x86_64 AUDITWHEEL_PLAT=${POLICY}_x86_64
+
+FROM runtime_base_packages AS runtime_base_packages_arm64
+ARG POLICY
+ENV AUDITWHEEL_ARCH=aarch64 AUDITWHEEL_PLAT=${POLICY}_aarch64
+
+FROM runtime_base_packages AS runtime_base_packages_s390x
+ARG POLICY
+ENV AUDITWHEEL_ARCH=s390x AUDITWHEEL_PLAT=${POLICY}_s390x
+
+FROM runtime_base_packages AS runtime_base_packages_ppc64le
+ARG POLICY
+ENV AUDITWHEEL_ARCH=ppc64le AUDITWHEEL_PLAT=${POLICY}_ppc64le
+
+FROM runtime_base_packages_${TARGETARCH} AS runtime_base_arch
+
 
 # prepare cross-compilation support
 FROM --platform=linux/${MANYLINUX_BUILDARCH} ghcr.io/mayeut/static-clang:${MANYLINUX_CLANG_VERSION} AS static_clang_bin
@@ -61,7 +90,7 @@ FROM scratch AS static_clang
 COPY --from=static_clang_prepare /tmp/cross-compiler /
 
 
-FROM runtime_base_packages AS runtime_base
+FROM runtime_base_arch AS runtime_base
 COPY build_scripts/install-autoconf.sh /opt/_internal/build_scripts/
 RUN --mount=type=bind,from=static_clang,target=/tmp/cross-compiler,ro \
     export AUTOCONF_ROOT=autoconf-2.72 && \
@@ -176,11 +205,11 @@ RUN --mount=type=bind,from=static_clang,target=/tmp/cross-compiler,ro \
 FROM build_base AS build_rust
 COPY build_scripts/build-rust.sh /opt/_internal/build_scripts/
 # The unversioned .../rustup/dist path always serves the newest rustup, so the
-# version is pinned in the URL; otherwise RUSTUP_HASH breaks on every release.
+# version is pinned in the URL. Per-arch rustup-init sha256 digests live in
+# build-rust.sh (matched to this RUSTUP_VERSION).
 RUN --mount=type=bind,from=static_clang,target=/tmp/cross-compiler,ro \
     export RUST_VERSION=1.98.1 && \
     export RUSTUP_VERSION=1.29.1 && \
-    export RUSTUP_HASH=dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71 && \
     export RUSTUP_DOWNLOAD_URL=https://static.rust-lang.org/rustup/archive/${RUSTUP_VERSION} && \
     /tmp/cross-compiler/entrypoint /opt/_internal/build_scripts/build-rust.sh
 
