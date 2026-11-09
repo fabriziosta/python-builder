@@ -41,6 +41,7 @@
 # Rust 1.94.0 (rustup-init for x86_64)
 RUST_VERSION=1.94.0
 RUSTUP_HASH=4acc9acc76d5079515b46346a485974457b5a79893cfb01112423c89aeb5aa10
+# Multi-arch: per-arch rustup-init digests now live in build_scripts/build-rust.sh
 
 # libjpeg-turbo 3.1.3
 LIBJPEG_TURBO_VERSION=3.1.3
@@ -146,6 +147,7 @@ LIBTIFF_HASH=b92017489bdc1db3a4c97191aa4b75366673cb746de0dce5d7a749d5954681ba
 ```bash
 # Rust (rustup-init)
 https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init
+# Multi-arch triples/hashes: see build_scripts/build-rust.sh (archive/<RUSTUP_VERSION>/…)
 
 # libjpeg-turbo
 https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.1.3/libjpeg-turbo-3.1.3.tar.gz
